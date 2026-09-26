@@ -661,12 +661,3 @@ from the LRU cache in milliseconds — check the `X-Cache` header.
 
 `discover()` only runs at startup. Restart the server.
 </details>
-
----
-
-## 👤 Author
-
-**KubikNoLego** — <originallikitun@gmail.com> · version `0.1.0`
-
-⭐ If you build something cool with HTMLShot, send a PR with your template —
-it makes a great example folder.
