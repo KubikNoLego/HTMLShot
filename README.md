@@ -29,7 +29,7 @@ anywhere you need a nice picture generated from data on the fly.
 | [📁 Project structure](#-project-structure) | [⚙️ Pipeline in detail](#-pipeline-in-detail) |
 | [📦 Requirements](#-requirements) | [💾 Caching](#-caching) |
 | [🚀 Quickstart](#-quickstart) | [🧪 Tests](#-tests) |
-| [⚙️ Configuration](#-configuration) | [🩺 FAQ](#-faq) · [👤 Author](#-author) |
+| [⚙️ Configuration](#-configuration) | [🩺 FAQ](#-faq) |
 
 ---
 
