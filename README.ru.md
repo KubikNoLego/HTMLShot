@@ -40,7 +40,7 @@
 | 📂 **Файловые шаблоны** | папка на диске = шаблон, автопоиск при старте, без БД |
 | 🧵 **Jinja2** | `{{ var }}`, `{% for %}`, `{% if %}`, `|upper`, `|default`, `|e` |
 | 🖼 **Playwright Chromium** | точные скриншоты, свой viewport на шаблон, WebP / PNG / JPEG |
-| 📦 **Умный инлайнинг ассетов** | `url()` в CSS → base64 или `file://`, удалённые файлы качаются (лимит 8 МБ) |
+| 🗂 **Относительные ассеты** | `./style.css`, шрифты и картинки грузятся прямо из папки шаблона |
 | 💾 **LRU-кэш картинок** | 128 записей / 256 МБ, виден в заголовке `X-Cache` |
 | 🧪 **Покрыт тестами** | поиск шаблонов, рендеринг, ассеты, кэш, настройки, API |
 
@@ -63,7 +63,7 @@
                     │ miss
                     ▼
     ┌───────────────────────────────┐
-    │  ImageRender.render(context)  │  Jinja2 + css_path → data:text/css;base64
+    │  ImageRender.render(context)  │  Jinja2-шаблон → HTML
     └───────────────┬───────────────┘
                     ▼
     ┌───────────────────────────────┐
@@ -73,13 +73,12 @@
     render_cache.set(key, bytes) ──▶ Ответ · X-Cache: miss
 ```
 
-Три кэша ускоряют работу:
+Два кэша ускоряют работу:
 
 | Кэш | Ключ | Что хранит |
 |-----|------|------------|
 | `ImageRender._cache` | id шаблона | скомпилированное окружение Jinja2 |
 | `render_cache` | sha256(шаблон + контекст + формат + качество) | готовые байты картинки (LRU) |
-| `_CSS_CACHE` | путь + mtime + размер | `style.css` как `data:` URI |
 
 **Почему это быстро?** Скриншот — дорогая операция, но повторный идентичный
 запрос отдаётся из кэша за миллисекунды. Заголовок `X-Cache` показывает, по
@@ -101,7 +100,6 @@ HTMLshot/
 │   ├── services/
 │   │   ├── template.py        # TemplateService: discover / get / list_all / exists
 │   │   ├── render.py          # ImageRender (Jinja2) + Renderer (Playwright)
-│   │   ├── assets.py          # data_uri, guess_mime, inline_css_urls, css_data_uri
 │   │   └── cache.py           # make_cache_key, RenderCache, render_cache
 │   └── templates/             # ← ВСЕ ШАБЛОНЫ ЗДЕСЬ
 │       ├── profile_card/
@@ -120,7 +118,7 @@ HTMLshot/
 
 **С чего читать:** `services/template.py:discover()` →
 `schemas/template.py:TemplateManifest` → `services/render.py:ImageRender.render()` →
-`services/render.py:Renderer.render_html()` → `services/assets.py:css_data_uri()`.
+`services/render.py:Renderer.render_html()`.
 
 ---
 
@@ -317,7 +315,6 @@ mkdir -p src/htmlshot/templates/hello_card
 {
   "name": "Hello card",
   "entrypoint": "index.html",
-  "css": "style.css",
   "viewport": { "width": 400, "height": 200 },
   "description": "Приветствует пользователя по имени",
   "default_format": "png",
@@ -330,7 +327,6 @@ mkdir -p src/htmlshot/templates/hello_card
 | `id` | `str` | *имя папки* | Проставляется автоматически. Используется в `?template=` |
 | `name` | `str` | `""` | Имя для человека, видно в `GET /templates` |
 | `entrypoint` | `str` | `index.html` | Jinja2-файл внутри папки |
-| `css` | `str` | `style.css` | Таблица стилей, подставляется как `{{ css_path }}` |
 | `viewport.width` | `int` | `800` | Ширина скриншота в px, должна быть `> 0` |
 | `viewport.height` | `int` | `600` | Высота скриншота в px, должна быть `> 0` |
 | `description` | `str` | `""` | Видно в `GET /templates` |
@@ -357,7 +353,7 @@ JSON-контекстом.
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <link rel="stylesheet" href="{{ css_path }}">
+  <link rel="stylesheet" href="./style.css">
 </head>
 <body>
   <div class="card">
@@ -370,8 +366,8 @@ JSON-контекстом.
 ```
 
 🔑 **Золотое правило:** всегда подключай
-`<link rel="stylesheet" href="{{ css_path }}">`. Без него картинка будет
-без стилей.
+`<link rel="stylesheet" href="./style.css">`. Браузер грузит файл из папки
+шаблона, поэтому без него картинка будет без стилей.
 
 Как контекст превращается в переменные:
 
@@ -382,30 +378,20 @@ Jinja       {{ username }}  →  "кубик"
             {% if vip %}     →  true  (блок отрисуется)
 ```
 
-`ImageRender.render()` всегда подставляет `css_path`:
-
-| Ситуация | Результат |
-|----------|-----------|
-| В контексте нет `css_path`, файл `style.css` есть | `data:text/css;base64,...` со всеми встроенными `url()` |
-| В контексте нет `css_path`, CSS-файла нет | `""` (пустая строка) |
-| `css_path` передан явно | используется как есть (`data:`, `file:`, `http(s)://` сохраняются, локальный путь → `file://`) |
-
-Последняя строка позволяет менять тему прямо в запросе:
-
-```json
-{"username": "кубик", "css_path": "data:text/css,body{background:hotpink}"}
-```
+`ImageRender.render()` только подставляет переменные из JSON-контекста — таблица
+стилей подключается из входного HTML обычным относительным путём.
 
 ---
 ### 4️⃣ Шаг 4 — CSS
 
-`style.css` читается, все `url(...)` внутри него разрешаются, и результат
-встраивается как `data:text/css;base64`.
+`style.css` лежит рядом с входным HTML, и грузит его сам Chromium через
+`file://` — относительные `url(...)` внутри разрешаются от CSS-файла, поэтому
+шрифты и картинки держи в той же папке.
 
 ```css
 @font-face {
   font-family: "Impact";
-  src: url("Impact.ttf");          /* 136 КБ → останется как file:// URI */
+  src: url("Impact.ttf");          /* грузит браузер */
 }
 
 body {
@@ -425,23 +411,19 @@ body {
 .badge  { background: gold; color: #000; border-radius: 8px; padding: 2px 8px; }
 ```
 
-**Правила для ассетов (`services/assets.py`):**
+**Правила для ассетов:**
 
 | Ссылка | Результат |
 |--------|-----------|
-| `url("bg.png")`, файл ≤ 64 КБ | встраивается как `data:image/png;base64,...` |
-| `url("Impact.ttf")`, файл > 64 КБ | абсолютный `file://` URI (HTML остаётся маленьким) |
-| `url("https://...")` | скачивается (таймаут 10 с, лимит 8 МБ) → `data:` URI |
-| `url("data:...")` | не трогаем |
-| файла нет | остаётся как есть → битая картинка в результате |
+| `url("bg.png")` | грузится из папки шаблона браузером |
+| `url("Impact.ttf")` | то же — без base64, HTML остаётся маленьким |
+| `url("https://...")` | скачивается браузером во время скриншота |
+| `url("data:...")` | используется как есть |
+| файла нет | битая картинка в результате |
 
-Поддерживаемые MIME-типы: `.png .jpg .jpeg .webp .gif .avif .bmp .svg`,
-`.ttf .otf .woff .woff2`.
-
-> 🖼 Картинки, переданные **в JSON-контексте, автоматически не встраиваются**.
-> Либо положи файл рядом с входным HTML и укажи относительный путь (Playwright
-> разрешит его через `base_path`), либо подключи картинку из CSS — тогда она
-> встроится сама.
+> 🖼 Картинки, переданные **в JSON-контексте, тоже грузит браузер**: положи файл
+> рядом с входным HTML и укажи относительный путь — Playwright разрешит его через
+> `base_path`.
 
 ### 5️⃣ Шаг 5 — рестарт и отладка через `/preview`
 
@@ -524,7 +506,7 @@ cp -r src/htmlshot/templates/hello_card src/htmlshot/templates/goodbye_card
 | Симптом | Причина |
 |---------|---------|
 | Шаблона нет в `/templates` | не то имя папки или манифест отклонён |
-| Картинка без стилей | забыл `<link href="{{ css_path }}">` или опечатка в поле `css` |
+| Картинка без стилей | забыл `<link rel="stylesheet" href="./style.css">` |
 | Картинка обрезана | размер `body` в CSS не совпадает с `viewport` |
 | Битая картинка | путь в `url()` считается от **CSS-файла**, а не от входного HTML |
 | 404 после добавления папки | сервер не перезапущен — хот-релоада шаблонов нет |
@@ -542,8 +524,7 @@ cp -r src/htmlshot/templates/hello_card src/htmlshot/templates/goodbye_card
 **3 · Рендерим HTML** — `ImageRender.for_template(manifest)` возвращает
 закэшированный синглтон на каждый id (скомпилированное окружение Jinja2
 переиспользуется). `.render(context)` копирует твой словарь (никогда не
-мутирует его), подставляет `css_path` через `cached_css_data_uri()` и вызывает
-`template.render(**ctx)`.
+мутирует его) и вызывает `template.render(**ctx)`.
 
 **4 · Делаем скриншот** — `Renderer.render_html()`:
 
@@ -585,10 +566,6 @@ make_cache_key(template_id, context, image_format, quality) -> str  # sha256 hex
 **2 · Окружения Jinja** — `ImageRender.for_template()` хранит по одному
 скомпилированному шаблону на id в словаре класса, парсинг происходит один раз.
 
-**3 · CSS как data URI** — `_CSS_CACHE` ключуется по `(путь, mtime_ns, размер)`.
-Правка `style.css` инвалидирует кэш автоматически: следующий запрос заново
-прочитает и перевстроит файл.
-
 > ♻️ Кэш живёт в процессе. Несколько воркеров → у каждого свой браузер и свой
 > кэш.
 
@@ -606,10 +583,10 @@ uv run pytest tests/test_template_service.py -v   # один файл
 | `make_template()` | собирает временную папку шаблона (`index.htm` + `style.css` + манифест `320x180`) и заново запускает `discover()` |
 | `client` | `TestClient` с заглушкой lifespan (браузер не запускается) |
 | `renderer_stub` | подменяет `Renderer.render_html`, записывает вызовы, возвращает `b"fake-image-bytes"` |
-| `clear_global_caches` | autouse — чистит `render_cache`, `ImageRender._cache`, `_CSS_CACHE` до и после каждого теста |
+| `clear_global_caches` | autouse — чистит `render_cache` и `ImageRender._cache` до и после каждого теста |
 
-Покрыто: валидация манифестов, запасные пути при поиске шаблонов, инлайнинг CSS,
-ключи кэша, вытеснение LRU, разбор настроек и все эндпоинты.
+Покрыто: валидация манифестов, запасные пути при поиске шаблонов, подстановка
+контекста, ключи кэша, вытеснение LRU, разбор настроек и все эндпоинты.
 
 ---
 
@@ -626,9 +603,9 @@ id шаблона — это имя папки. Проверь `GET /templates`:
 <details>
 <summary>Картинка без стилей</summary>
 
-Ты забыл `<link rel="stylesheet" href="{{ css_path }}">` либо в `manifest.css`
-указан несуществующий файл (тогда `css_path` — пустая строка). Проверь через
-`POST /preview`: в возвращённом HTML видно настоящий `href`.
+Ты забыл `<link rel="stylesheet" href="./style.css">` либо файла `style.css` нет
+в папке шаблона. Проверь через `POST /preview`: в возвращённом HTML видно
+настоящий `href`.
 </details>
 
 <details>
@@ -650,10 +627,9 @@ uv run playwright install-deps chromium   # системные библиоте�
 <details>
 <summary>Не отображаются картинки или шрифты</summary>
 
-Ссылайся на них через `url()` в CSS (путь считается от CSS-файла) — такие
-встраиваются автоматически. Пути из JSON-контекста **не** встраиваются: положи
-файл рядом с входным HTML и укажи относительный путь, тогда Playwright
-разрешит его через `base_path`. Для удалённых ассетов лимит — 8 МБ и 10 секунд.
+Указывай относительные пути: в CSS `url()` они считаются от CSS-файла, в
+JSON-контексте — от входного HTML (`base_path`). Файлы должны лежать внутри
+папки шаблона — все ассеты грузит сам браузер.
 </details>
 
 <details>

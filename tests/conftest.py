@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from htmlshot.services import assets
 from htmlshot.services.cache import render_cache
 from htmlshot.services.render import ImageRender, Renderer
 from htmlshot.services.template import TemplateService
@@ -16,7 +15,6 @@ from htmlshot.services.template import TemplateService
 DEFAULT_MANIFEST = {
     "name": "Тестовый шаблон",
     "entrypoint": "index.htm",
-    "css": "style.css",
     "viewport": {"width": 320, "height": 180},
     "description": "Временный шаблон для тестов",
 }
@@ -24,7 +22,7 @@ DEFAULT_MANIFEST = {
 DEFAULT_HTML = (
     "<!doctype html>\n"
     "<html>\n"
-    '<head><link rel="stylesheet" href="{{ css_path }}"></head>\n'
+    '<head><link rel="stylesheet" href="./style.css"></head>\n'
     '<body><span class="username">{{ username }}</span></body>\n'
     "</html>\n"
 )
@@ -34,16 +32,15 @@ DEFAULT_CSS = "body { margin: 0; }\n"
 
 @pytest.fixture(autouse=True)
 def clear_global_caches():
-    """Ensure global caches (image LRU cache, template instances, CSS URIs) do not leak between test runs.
+    """Ensure global caches (image LRU cache, template instances) do not leak between test runs.
 
-    Clears the rendered image byte cache, compiled Jinja2 template instances,
-    and cached CSS data URIs both prior to test execution and immediately following teardown.
+    Clears the rendered image byte cache and compiled Jinja2 template instances
+    both prior to test execution and immediately following teardown.
     """
 
     def _clear():
         render_cache.clear()
         ImageRender.clear_cache()
-        assets._CSS_CACHE.clear()
 
     _clear()
     yield

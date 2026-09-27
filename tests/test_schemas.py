@@ -35,7 +35,6 @@ class TestTemplateManifest:
     def test_defaults(self):
         manifest = self._manifest()
         assert manifest.entrypoint == "index.html"
-        assert manifest.css == "style.css"
         assert manifest.name == ""
         assert manifest.description == ""
         assert manifest.default_format is None
@@ -45,7 +44,6 @@ class TestTemplateManifest:
         manifest = self._manifest(entrypoint="index.htm")
         assert manifest.template_dir == Path("/tmp/templates/demo")
         assert manifest.template_file_path == Path("/tmp/templates/demo/index.htm")
-        assert manifest.css_file_path == Path("/tmp/templates/demo/style.css")
 
     def test_loader_name_is_dir_relative(self):
         manifest = self._manifest(entrypoint="index.htm")

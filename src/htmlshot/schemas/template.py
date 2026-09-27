@@ -12,7 +12,6 @@ class TemplateManifest(BaseModel):
     id: str
     name: str = ""
     entrypoint: str = "index.html"
-    css: str = "style.css"
     viewport: ViewportConfig = ViewportConfig()
     description: str = ""
     dir_path: str = ""
@@ -28,11 +27,6 @@ class TemplateManifest(BaseModel):
     def template_file_path(self) -> Path:
         """Return the absolute or relative path to the template entrypoint file."""
         return self.template_dir / self.entrypoint
-
-    @property
-    def css_file_path(self) -> Path:
-        """Return the path to the template's companion CSS stylesheet."""
-        return self.template_dir / self.css
 
     @property
     def loader_name(self) -> str:

@@ -33,14 +33,12 @@ class TestDiscover:
         (folder / "manifest.json").write_text(json.dumps({
             "name": "Профиль",
             "entrypoint": "profile.htm",
-            "css": "theme.css",
             "viewport": {"width": 320, "height": 180},
             "description": "Карточка профиля",
             "default_format": "png",
             "default_quality": 90,
         }), encoding="utf-8")
         (folder / "profile.htm").write_text("<html></html>", encoding="utf-8")
-        (folder / "theme.css").write_text("body{}", encoding="utf-8")
 
         service = TemplateService(templates_root)
         service.discover()
@@ -49,7 +47,6 @@ class TestDiscover:
         assert isinstance(manifest, TemplateManifest)
         assert manifest.name == "Профиль"
         assert manifest.entrypoint == "profile.htm"
-        assert manifest.css == "theme.css"
         assert manifest.page_size == {"width": 320, "height": 180}
         assert manifest.default_format == "png"
         assert manifest.default_quality == 90

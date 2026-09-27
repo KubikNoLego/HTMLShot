@@ -41,7 +41,7 @@ anywhere you need a nice picture generated from data on the fly.
 | 📂 **File-based templates** | a folder on disk is a template — auto-discovered at startup, no database |
 | 🧵 **Jinja2** | `{{ var }}`, `{% for %}`, `{% if %}`, `|upper`, `|default`, `|e` |
 | 🖼 **Playwright Chromium** | pixel-accurate screenshots, viewport per template, WebP / PNG / JPEG |
-| 📦 **Smart asset inlining** | `url()` in CSS → base64 or `file://`, remote assets fetched (8 MB cap) |
+| 🗂 **Relative assets** | `./style.css`, fonts and images load straight from the template folder |
 | 💾 **LRU image cache** | 128 entries / 256 MB, transparent via the `X-Cache` header |
 | 🧪 **Fully tested** | discovery, rendering, assets, cache, settings and API |
 
@@ -64,7 +64,7 @@ anywhere you need a nice picture generated from data on the fly.
                     │ miss
                     ▼
     ┌───────────────────────────────┐
-    │  ImageRender.render(context)  │  Jinja2 + css_path → data:text/css;base64
+    │  ImageRender.render(context)  │  Jinja2 template → HTML
     └───────────────┬───────────────┘
                     ▼
     ┌───────────────────────────────┐
@@ -74,13 +74,12 @@ anywhere you need a nice picture generated from data on the fly.
     render_cache.set(key, bytes) ──▶ Response · X-Cache: miss
 ```
 
-Three caches keep things fast:
+Two caches keep things fast:
 
 | Cache | Key | Stores |
 |-------|-----|--------|
 | `ImageRender._cache` | template id | compiled Jinja2 environment |
 | `render_cache` | sha256(template + context + format + quality) | finished image bytes (LRU) |
-| `_CSS_CACHE` | path + mtime + size | `style.css` as a `data:` URI |
 
 **Why is it fast?** Screenshots are expensive, but a repeated identical request
 returns cached bytes in milliseconds. The `X-Cache` header tells you which path
@@ -102,7 +101,6 @@ HTMLshot/
 │   ├── services/
 │   │   ├── template.py        # TemplateService: discover / get / list_all / exists
 │   │   ├── render.py          # ImageRender (Jinja2) + Renderer (Playwright)
-│   │   ├── assets.py          # data_uri, guess_mime, inline_css_urls, css_data_uri
 │   │   └── cache.py           # make_cache_key, RenderCache, render_cache
 │   └── templates/             # ← ALL TEMPLATES LIVE HERE
 │       ├── profile_card/
@@ -121,7 +119,7 @@ HTMLshot/
 
 **Suggested reading order:** `services/template.py:discover()` →
 `schemas/template.py:TemplateManifest` → `services/render.py:ImageRender.render()` →
-`services/render.py:Renderer.render_html()` → `services/assets.py:css_data_uri()`.
+`services/render.py:Renderer.render_html()`.
 
 ---
 
@@ -316,7 +314,6 @@ format to save it.
 {
   "name": "Hello card",
   "entrypoint": "index.html",
-  "css": "style.css",
   "viewport": { "width": 400, "height": 200 },
   "description": "Greets a user by name",
   "default_format": "png",
@@ -329,7 +326,6 @@ format to save it.
 | `id` | `str` | *folder name* | Auto-assigned. Used in `?template=` |
 | `name` | `str` | `""` | Human-readable name, shown in `GET /templates` |
 | `entrypoint` | `str` | `index.html` | Jinja2 file inside the folder |
-| `css` | `str` | `style.css` | Stylesheet injected as `{{ css_path }}` |
 | `viewport.width` | `int` | `800` | Screenshot width in px, must be `> 0` |
 | `viewport.height` | `int` | `600` | Screenshot height in px, must be `> 0` |
 | `description` | `str` | `""` | Shown in `GET /templates` |
@@ -353,7 +349,7 @@ It's a **Jinja2 template** rendered with your JSON context.
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <link rel="stylesheet" href="{{ css_path }}">
+  <link rel="stylesheet" href="./style.css">
 </head>
 <body>
   <div class="card">
@@ -366,8 +362,8 @@ It's a **Jinja2 template** rendered with your JSON context.
 ```
 
 🔑 **The golden rule:** always include
-`<link rel="stylesheet" href="{{ css_path }}">`. Without it you get an unstyled
-screenshot.
+`<link rel="stylesheet" href="./style.css">`. The browser loads it from the
+template folder, so without it you get an unstyled screenshot.
 
 How the context becomes variables:
 
@@ -378,30 +374,20 @@ Jinja       {{ username }}  →  "kubik"
             {% if vip %}     →  true  (block renders)
 ```
 
-`ImageRender.render()` always injects `css_path`:
-
-| Situation | Result |
-|-----------|--------|
-| No `css_path` in context, `style.css` exists | `data:text/css;base64,...` with all `url()` inlined |
-| No `css_path`, CSS file missing | `""` (empty string) |
-| `css_path` given explicitly | used as-is (`data:`, `file:`, `http(s)://` kept, local paths → `file://`) |
-
-That last row lets you theme per request:
-
-```json
-{"username": "kubik", "css_path": "data:text/css,body{background:hotpink}"}
-```
+`ImageRender.render()` only interpolates your JSON context — the stylesheet is
+referenced from the entrypoint with a plain relative path.
 
 ---
 ### 4️⃣ Step 4 — the CSS
 
-`style.css` is read, all `url(...)` inside it are resolved, and the result is
-embedded as a `data:text/css;base64` stylesheet.
+`style.css` sits next to your entrypoint and is loaded by Chromium over
+`file://` — relative `url(...)` references inside it resolve against the CSS
+file itself, so keep the fonts and images in the same folder.
 
 ```css
 @font-face {
   font-family: "Impact";
-  src: url("Impact.ttf");          /* 136 KB → kept as a file:// URI */
+  src: url("Impact.ttf");          /* loaded by the browser */
 }
 
 body {
@@ -421,22 +407,19 @@ body {
 .badge  { background: gold; color: #000; border-radius: 8px; padding: 2px 8px; }
 ```
 
-**Asset rules (`services/assets.py`):**
+**Asset rules:**
 
 | Reference | Result |
 |-----------|--------|
-| `url("bg.png")`, file ≤ 64 KB | inlined as `data:image/png;base64,...` |
-| `url("Impact.ttf")`, file > 64 KB | absolute `file://` URI (keeps the HTML small) |
-| `url("https://...")` | downloaded (10 s timeout, 8 MB limit) → `data:` URI |
-| `url("data:...")` | untouched |
-| missing file | left as-is → broken image in the result |
+| `url("bg.png")` | loaded from the template folder by the browser |
+| `url("Impact.ttf")` | same — no base64, so the HTML stays small |
+| `url("https://...")` | fetched by the browser while the screenshot is taken |
+| `url("data:...")` | used as-is |
+| missing file | broken image in the result |
 
-Supported MIME types: `.png .jpg .jpeg .webp .gif .avif .bmp .svg`,
-`.ttf .otf .woff .woff2`.
-
-> 🖼 Images passed **in the JSON context are not auto-inlined**. Either put the
-> file next to your entrypoint and use a relative path (Playwright resolves it
-> through `base_path`), or reference it from CSS so it gets embedded.
+> 🖼 Images passed **in the JSON context are loaded by the browser too**: put the
+> file next to your entrypoint and pass a relative path — Playwright resolves it
+> through `base_path`.
 
 ### 5️⃣ Step 5 — restart and debug with `/preview`
 
@@ -518,7 +501,7 @@ Common mistakes:
 | Symptom | Cause |
 |---------|-------|
 | Template missing from `/templates` | wrong folder name, or the manifest was rejected |
-| Unstyled output | forgot `<link href="{{ css_path }}">`, or `css` typo in the manifest |
+| Unstyled output | forgot `<link rel="stylesheet" href="./style.css">` |
 | Screenshot is cut off | CSS `body` size ≠ `viewport` size |
 | Broken image | the `url()` path is relative to the **CSS file**, not the entrypoint |
 | 404 after adding a folder | the server wasn't restarted — no hot-reload for templates |
@@ -535,8 +518,7 @@ builds a SHA-256 of a canonical JSON dump; a hit returns immediately.
 
 **3 · Render HTML** — `ImageRender.for_template(manifest)` returns a cached
 singleton per id (the compiled Jinja2 environment is reused). `.render(context)`
-copies your dict (it never mutates it), resolves `css_path` via
-`cached_css_data_uri()`, then calls `template.render(**ctx)`.
+copies your dict (it never mutates it), then calls `template.render(**ctx)`.
 
 **4 · Screenshot** — `Renderer.render_html()`:
 
@@ -578,10 +560,6 @@ make_cache_key(template_id, context, image_format, quality) -> str  # sha256 hex
 **2 · Jinja environments** — `ImageRender.for_template()` keeps one compiled
 template per id in a class-level dict, so parsing happens once.
 
-**3 · CSS data URIs** — `_CSS_CACHE` is keyed by `(path, mtime_ns, size)`.
-Editing `style.css` invalidates it automatically; the next request re-reads and
-re-inlines the file.
-
 > ♻️ The cache is per-process. Run several workers → each one has its own
 > browser and its own cache.
 
@@ -599,10 +577,10 @@ uv run pytest tests/test_template_service.py -v   # single file
 | `make_template()` | builds a temp template folder (`index.htm` + `style.css` + manifest `320x180`) and re-runs `discover()` |
 | `client` | `TestClient` with a no-op lifespan (no browser launched) |
 | `renderer_stub` | monkeypatches `Renderer.render_html`, records calls, returns `b"fake-image-bytes"` |
-| `clear_global_caches` | autouse — clears `render_cache`, `ImageRender._cache`, `_CSS_CACHE` around each test |
+| `clear_global_caches` | autouse — clears `render_cache` and `ImageRender._cache` around each test |
 
-Covered: manifest validation, discovery fallbacks, CSS inlining, cache keys,
-LRU eviction, settings parsing, and every endpoint.
+Covered: manifest validation, discovery fallbacks, context interpolation,
+cache keys, LRU eviction, settings parsing, and every endpoint.
 
 ---
 
@@ -619,9 +597,9 @@ entrypoint file). Look at the loguru warnings on startup.
 <details>
 <summary>The image has no styling</summary>
 
-You forgot `<link rel="stylesheet" href="{{ css_path }}">`, or `manifest.css`
-points to a file that doesn't exist (then `css_path` is an empty string).
-Check with `POST /preview` — the returned HTML shows the actual `href`.
+You forgot `<link rel="stylesheet" href="./style.css">`, or `style.css` isn't in
+the template folder. Check with `POST /preview` — the returned HTML shows the
+actual `href`.
 </details>
 
 <details>
@@ -643,10 +621,9 @@ uv run playwright install-deps chromium   # Linux system libraries
 <details>
 <summary>Images or fonts don't show up</summary>
 
-Reference them through CSS `url()` (relative to the CSS file) — those get
-inlined automatically. Paths passed in the JSON context are **not** inlined:
-put the file next to your entrypoint and use a relative path, so Playwright
-resolves it via `base_path`. Remote assets are limited to 8 MB / 10 s.
+Use relative paths: inside CSS `url()` they resolve against the CSS file, in the
+JSON context against the entrypoint (`base_path`). The files must live inside the
+template folder — every asset is loaded by the browser itself.
 </details>
 
 <details>

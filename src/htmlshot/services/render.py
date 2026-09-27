@@ -5,11 +5,10 @@ from jinja2 import Environment, FileSystemLoader
 from typing import Any
 
 from htmlshot.schemas.template import TemplateManifest
-from htmlshot.services.assets import cached_css_data_uri
 
 
 class ImageRender:
-    """Renders HTML from Jinja2 templates with stylesheet inlining and caching."""
+    """Renders HTML from Jinja2 templates with context interpolation and caching."""
 
     _cache: dict[str, "ImageRender"] = {}
 
@@ -23,8 +22,6 @@ class ImageRender:
             loader=FileSystemLoader(str(template.template_dir.parent)))
 
         self.template = self.env.get_template(template.loader_name)
-        self._template_dir = template.template_dir
-        self._css_filename = template.css
         self.page_size = template.page_size
 
     @classmethod
@@ -51,33 +48,13 @@ class ImageRender:
         """Clear all cached ImageRender instances from memory."""
         cls._cache.clear()
 
-    @staticmethod
-    def _css_href(value: str) -> str:
-        """Normalize a CSS reference into a valid URI for stylesheet href inclusion.
-
-        Recognizes existing URI schemes (data:, file:, http://, https://) and leaves
-        them intact. For local filesystem paths, verifies file existence and converts
-        them into absolute file:// URIs.
-
-        Args:
-            value: A path or URI string pointing to a stylesheet.
-
-        Returns:
-            A normalized URI string suitable for use in an HTML link element.
-        """
-        if value.startswith(("data:", "file:", "http://", "https://")):
-            return value
-        path = Path(value)
-        if path.is_file():
-            return path.as_uri()
-        return value
-
     async def render(self, context: dict[str, Any]) -> str:
-        """Render the Jinja2 template with the given context and inlined styles.
+        """Render the Jinja2 template with the given context variables.
 
-        Resolves and injects the 'css_path' variable into the render context:
-        either using an explicit 'css_path' provided by caller, or reading and
-        caching the companion stylesheet as a data URI or file URI.
+        Copies the caller's context dictionary (it is never mutated) and renders
+        the Jinja2 template. Stylesheets and other assets are referenced from the
+        entrypoint with relative paths (e.g. `./style.css`) and resolved by the
+        browser through `base_path` during screenshot rendering.
 
         Args:
             context: Dictionary of variables to supply to the Jinja2 template.
@@ -86,17 +63,6 @@ class ImageRender:
             The complete rendered HTML string ready for browser rendering.
         """
         ctx = dict(context)
-        if ctx.get("css_path") is None:
-            css = self._template_dir / self._css_filename
-            uri = await cached_css_data_uri(css)
-            if uri is not None:
-                ctx["css_path"] = uri
-            elif css.is_file():
-                ctx["css_path"] = css.as_uri()
-            else:
-                ctx["css_path"] = ""
-        else:
-            ctx["css_path"] = self._css_href(str(ctx["css_path"]))
         return self.template.render(**ctx)
 
 

@@ -35,7 +35,7 @@ class TestPreviewEndpoint:
         # FastAPI сериализует строку в JSON — получаем HTML-строку
         html = response.json()
         assert "<span class=\"username\">Кубик</span>" in html
-        assert 'href="data:text/css;base64,' in html
+        assert 'href="./style.css"' in html
 
     def test_unknown_template_returns_404(self, client):
         response = client.post(
